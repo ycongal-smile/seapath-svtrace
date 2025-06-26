@@ -12,28 +12,35 @@ import importlib.resources as pkg_resources
 import svtracing
 import signal
 import select
+import sys
 
-# Global variable to control the main loops
+# Global variables
 should_continue = True
+current_process = None
 
-def signal_handler(signum, _):
-    global should_continue
+def signal_handler(signum, frame):
+    global should_continue, current_process
     signal_name = signal.Signals(signum).name
     print(f"\nReceived signal {signum} ({signal_name}), stopping...")
     should_continue = False
+    
+    # Terminate the subprocess if it exists
+    if current_process:
+        current_process.terminate()
 
-def setup_signal_handlers():
+def setup_signal_handlers(process):
     """Set up signal handlers for graceful shutdown"""
+    global current_process
+    current_process = process
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
 def live():
-    global should_continue
+    global should_continue, current_process
     should_continue = True
     
-    setup_signal_handlers()
-    
     process = run_command("live")
+    setup_signal_handlers(process)
 
     while should_continue:
         output = process.stdout.readline()
@@ -48,34 +55,26 @@ def live():
 
     process.terminate()
     process.wait()
+    current_process = None
 
 def record():
-    global should_continue
+    global should_continue, current_process
     should_continue = True
-    output = []
-    
-    setup_signal_handlers()
     
     process = run_command("record")
+    setup_signal_handlers(process)
 
     print("Start recording. Hit CTRL + C to stop")
-    while should_continue:
-        # Use select to check if data is available with 1 second timeout
-        ready, _, _ = select.select([process.stdout], [], [], 1.0)
-        if ready:
-            line = process.stdout.readline()
-            if not line and process.poll() is not None:
-                break
-            if line:
-                output.append(line.strip())
-        
-        # Check if process has terminated
-        if process.poll() is not None:
-            break
-
-    stderr_output = process.stderr.read()
+    
+    # Use communicate to get all output at once
+    stdout_output, stderr_output = process.communicate()
+    
     if stderr_output:
         print(stderr_output.strip())
+    
+    output = []
+    if stdout_output:
+        output = stdout_output.strip().split('\n')
 
     if output:
         # Remove first line if it exists (header)
@@ -88,8 +87,7 @@ def record():
         print(f"Results saved to {args.out}results")
     
     print("Exiting...")
-    process.terminate()
-    process.wait()
+    current_process = None
 
 def run_command(command):
     sv_id, sv_counter = extract_sv_fields()
