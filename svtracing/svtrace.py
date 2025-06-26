@@ -10,56 +10,78 @@ import subprocess
 import configparser
 import importlib.resources as pkg_resources
 import svtracing
+import signal
+
+# Global variable to control the main loops
+should_continue = True
+
+def signal_handler(signum, _):
+    global should_continue
+    signal_name = signal.Signals(signum).name
+    print(f"\nReceived signal {signum} ({signal_name}), stopping...")
+    should_continue = False
+
+def setup_signal_handlers():
+    """Set up signal handlers for graceful shutdown"""
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
 def live():
+    global should_continue
+    should_continue = True
+    
+    setup_signal_handlers()
+    
     process = run_command("live")
 
-    try:
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                print(output.strip())
+    while should_continue:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            print(output.strip())
 
-        stderr_output = process.stderr.read()
-        if stderr_output:
-            print(stderr_output.strip())
+    stderr_output = process.stderr.read()
+    if stderr_output:
+        print(stderr_output.strip())
 
-    except KeyboardInterrupt:
-        print("\033[0m")
-        print("Exiting...")
-        process.terminate()
-    finally:
-        process.wait()
+    process.terminate()
+    process.wait()
 
 def record():
+    global should_continue
+    should_continue = True
     output = []
+    
+    setup_signal_handlers()
+    
     process = run_command("record")
 
-    try:
-        print("Start recording. Hit CTRL + C to stop")
-        while True:
-            line = process.stdout.readline()
+    print("Start recording. Hit CTRL + C to stop")
+    while should_continue:
+        line = process.stdout.readline()
+        if not line and process.poll() is not None:
+            break
+        if line:
             output.append(line.strip())
-            if not line and process.poll() is not None:
-                break
 
-        stderr_output = process.stderr.read()
-        if stderr_output:
-            print(stderr_output.strip())
+    stderr_output = process.stderr.read()
+    if stderr_output:
+        print(stderr_output.strip())
 
-    except KeyboardInterrupt:
-        output = output[1:]
-
+    if output:
+        # Remove first line if it exists (header)
+        if len(output) > 1:
+            output = output[1:]
+        
         with open(f"{args.out}results", 'w') as f:
             f.write('\n'.join(output))
         f.close()
         print(f"Results saved to {args.out}results")
-        print("Exiting...")
-        process.terminate()
-    finally:
-        process.wait()
+    
+    print("Exiting...")
+    process.terminate()
+    process.wait()
 
 def run_command(command):
     sv_id, sv_counter = extract_sv_fields()
