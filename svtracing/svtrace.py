@@ -11,6 +11,7 @@ import configparser
 import importlib.resources as pkg_resources
 import svtracing
 import signal
+import select
 
 # Global variable to control the main loops
 should_continue = True
@@ -59,11 +60,18 @@ def record():
 
     print("Start recording. Hit CTRL + C to stop")
     while should_continue:
-        line = process.stdout.readline()
-        if not line and process.poll() is not None:
+        # Use select to check if data is available with 1 second timeout
+        ready, _, _ = select.select([process.stdout], [], [], 1.0)
+        if ready:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                output.append(line.strip())
+        
+        # Check if process has terminated
+        if process.poll() is not None:
             break
-        if line:
-            output.append(line.strip())
 
     stderr_output = process.stderr.read()
     if stderr_output:
